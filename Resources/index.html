@@ -132,28 +132,24 @@
             // Grid width is roughly 64 * 1.2 = 76.8, so from -38.4 to +38.4
             float xMap = clamp((instanceBasePos.x + 38.0) / 76.0, 0.0, 1.0);
             
-            // Animate the Z position to simulate moving forward
-            // The grid loops every 1.2 units (the spacing)
-            float zOffset = mod(u_time * 5.0, 1.2);
-            instanceBasePos.z += zOffset;
-            
             // Audio data based on X position (creates a spectrum analyzer effect across the city)
             float band = texture2D(u_audioTex, vec2(xMap, 0.5)).r;
             
             // Noise fallback for silence
             float noiseDisp = snoise(vec3(instanceBasePos.x * 0.1, instanceBasePos.z * 0.1, u_time * 0.2)) * 0.5;
             
-            // Calculate height spike (ensure it goes mostly up)
-            // If band is 0, use noise. If band > 0, spike massively.
-            float spike = max(noiseDisp, band * 15.0);
+            // Each building keeps its own phase so they move one by one, and the lift stays short.
+            float phase = instanceBasePos.x * 0.37 + instanceBasePos.z * 0.23;
+            float sway = sin(u_time * 1.35 + phase);
+            float spike = clamp(max(noiseDisp, band * 0.55), 0.0, 0.6);
             
             // Scale the Y axis of the building
             transformed.y *= 1.0 + spike;
             // Shift up so it grows from the base instead of the center
             transformed.y += (1.0 + spike) * 0.5 - 0.5;
-            
-            // Apply the scrolling Z offset to the vertex
-            transformed.z += zOffset;
+            transformed.y += sway * 0.08;
+            transformed.x += sway * 0.1;
+            transformed.z += cos(u_time * 0.95 + phase) * 0.1;
             `
         );
     };
@@ -190,12 +186,128 @@
     
     scene.add(instancedMesh);
     
-    // The Bass Sun (background stark white sphere)
-    const sunGeo = new THREE.SphereGeometry(10, 32, 32);
-    const sunMat = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false }); // Unlit stark white
+    // The Bass Sun (chromatic holographic glitch sphere)
+    const sunGeo = new THREE.SphereGeometry(10, 64, 64);
+    const sunMat = new THREE.ShaderMaterial({
+        uniforms: {
+            u_time: { value: 0 },
+            u_bass: { value: 0 }
+        },
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        fog: false,
+        vertexShader: `
+            varying vec2 vUv;
+            varying vec3 vNormal;
+            varying vec3 vViewPosition;
+            void main() {
+                vUv = uv;
+                vNormal = normalize(normalMatrix * normal);
+                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                vViewPosition = -mvPosition.xyz;
+                gl_Position = projectionMatrix * mvPosition;
+            }
+        `,
+        fragmentShader: `
+            uniform float u_time;
+            uniform float u_bass;
+            varying vec2 vUv;
+            varying vec3 vNormal;
+            varying vec3 vViewPosition;
+            
+            // Simplex noise for base texture
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec3 permute(vec3 x) { return mod289(((x*34.0)+1.0)*x); }
+            float snoise(vec2 v) {
+                const vec4 C = vec4(0.211324865405187, 0.366025403784439, -0.577350269189626, 0.024390243902439);
+                vec2 i  = floor(v + dot(v, C.yy) );
+                vec2 x0 = v -   i + dot(i, C.xx);
+                vec2 i1;
+                i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+                vec4 x12 = x0.xyxy + C.xxzz;
+                x12.xy -= i1;
+                i = mod289(i);
+                vec3 p = permute( permute( i.y + vec3(0.0, i1.y, 1.0 )) + i.x + vec3(0.0, i1.x, 1.0 ));
+                vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
+                m = m*m ;
+                m = m*m ;
+                vec3 x = 2.0 * fract(p * C.www) - 1.0;
+                vec3 h = abs(x) - 0.5;
+                vec3 ox = floor(x + 0.5);
+                vec3 a0 = x - ox;
+                m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
+                vec3 g;
+                g.x  = a0.x  * x0.x  + h.x  * x0.y;
+                g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+                return 130.0 * dot(m, g);
+            }
+
+            float random(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123); }
+
+            void main() {
+                vec3 normal = normalize(vNormal);
+                vec3 viewDir = normalize(vViewPosition);
+                
+                // Fresnel for glowing edge
+                float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 1.5);
+                
+                // Chromatic aberration offset
+                float offset = 0.02 + u_bass * 0.03;
+                
+                // Texture for R, G, B channels with offsets (color fringing effect)
+                float rNoise = snoise(vUv * 6.0 + vec2(offset, 0.0) - u_time * 0.1);
+                float gNoise = snoise(vUv * 6.0 - u_time * 0.1);
+                float bNoise = snoise(vUv * 6.0 + vec2(-offset, 0.0) - u_time * 0.1);
+                
+                // Static grain
+                float grain = random(vUv * 200.0 + u_time) * 0.2;
+                
+                // Base colors with glitch
+                float r = max(rNoise, 0.0) * 0.7 + fresnel + grain;
+                float g = max(gNoise, 0.0) * 0.7 + fresnel + grain;
+                float b = max(bNoise, 0.0) * 0.7 + fresnel + grain;
+                
+                // Intensify based on audio (mostly adds white/blue glow)
+                r += u_bass * 0.4;
+                g += u_bass * 0.4;
+                b += u_bass * 0.7;
+                
+                vec3 finalColor = vec3(r, g, b);
+                
+                // Cutout mask for the dark textured look
+                float mask = smoothstep(-0.3, 0.3, snoise(vUv * 4.0 + u_time * 0.05));
+                
+                // Opacity governed by mask and fresnel
+                float alpha = max(mask * 0.6, fresnel) + u_bass * 0.5;
+                
+                gl_FragColor = vec4(finalColor * mask, min(alpha, 1.0));
+            }
+        `
+    });
     const sun = new THREE.Mesh(sunGeo, sunMat);
     sun.position.set(0, 5, -60); // Far back
     scene.add(sun);
+
+    // Atom-like orbital rings
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending });
+    
+    const ring1 = new THREE.Mesh(new THREE.TorusGeometry(12, 0.06, 8, 100), ringMat);
+    ring1.rotation.x = Math.PI / 2.5;
+    ring1.position.copy(sun.position);
+    scene.add(ring1);
+    
+    const ring2 = new THREE.Mesh(new THREE.TorusGeometry(13.5, 0.06, 8, 100), ringMat);
+    ring2.rotation.y = Math.PI / 3;
+    ring2.position.copy(sun.position);
+    scene.add(ring2);
+    
+    const ring3 = new THREE.Mesh(new THREE.TorusGeometry(15, 0.06, 8, 100), ringMat);
+    ring3.rotation.x = -Math.PI / 3;
+    ring3.rotation.y = Math.PI / 4;
+    ring3.position.copy(sun.position);
+    scene.add(ring3);
 
     // Adjust camera for bird's-eye view
     camera.position.set(0, 15, 5);
@@ -214,9 +326,14 @@
         // Extract bass from the lowest bins
         const bass = ((currentAudio[0] || 0) + (currentAudio[1] || 0)) / 2;
         
-        // Scale sun based on bass, minimum scale 1.0
-        const sunScale = 1.0 + (bass * 0.5);
-        sun.scale.set(sunScale, sunScale, sunScale);
+        // Update the sun shader
+        sunMat.uniforms.u_time.value = time;
+        sunMat.uniforms.u_bass.value = bass;
+        
+        // Spin the atom rings
+        ring1.rotation.z += 0.005 + bass * 0.015;
+        ring2.rotation.x += 0.003 + bass * 0.01;
+        ring3.rotation.y -= 0.007 + bass * 0.015;
 
         renderer.render(scene, camera);
     }

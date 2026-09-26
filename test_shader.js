@@ -21,16 +21,21 @@ assert.match(
     "Shader should map instanceBasePos.x to [0.0, 1.0] frequency band"
 );
 
-// 3. Check for Z scrolling offset calculation and instanceBasePos.z update
+// 3. Each building moves on its own phase instead of the whole grid sliding together
 assert.match(
     html,
-    /float\s+zOffset\s*=\s*mod\(\s*u_time\s*\*\s*5\.0\s*,\s*1\.2\s*\);/,
-    "Shader should calculate zOffset = mod(u_time * 5.0, 1.2)"
+    /float\s+phase\s*=\s*instanceBasePos\.x\s*\*\s*0\.37\s*\+\s*instanceBasePos\.z\s*\*\s*0\.23;/,
+    "Shader should give each building its own phase"
 );
 assert.match(
     html,
-    /instanceBasePos\.z\s*\+=\s*zOffset;/,
-    "Shader should add zOffset to instanceBasePos.z"
+    /transformed\.x\s*\+=\s*sway\s*\*\s*0\.1;/,
+    "Shader should sway each building on X"
+);
+assert.match(
+    html,
+    /transformed\.z\s*\+=\s*cos\(\s*u_time\s*\*\s*0\.95\s*\+\s*phase\s*\)\s*\*\s*0\.1;/,
+    "Shader should sway each building on Z"
 );
 
 // 4. Check audio texture sampling using xMap
@@ -50,8 +55,8 @@ assert.match(
 // 6. Check spike calculation
 assert.match(
     html,
-    /float\s+spike\s*=\s*max\(\s*noiseDisp\s*,\s*band\s*\*\s*15\.0\s*\);/,
-    "Shader should calculate spike = max(noiseDisp, band * 15.0)"
+    /float\s+spike\s*=\s*clamp\(\s*max\(\s*noiseDisp\s*,\s*band\s*\*\s*0\.55\s*\)\s*,\s*0\.0\s*,\s*0\.6\s*\);/,
+    "Shader should cap spike at 0.6 so buildings do not rise too high"
 );
 
 // 7. Check Y-axis scaling and base-anchoring
@@ -66,11 +71,10 @@ assert.match(
     "Shader should offset transformed.y to grow from base"
 );
 
-// 8. Check applying scrolling Z offset to transformed.z
-assert.match(
-    html,
-    /transformed\.z\s*\+=\s*zOffset;/,
-    "Shader should add zOffset to transformed.z"
+// 8. Shared grid scroll should be gone; motion is per building
+assert.ok(
+    !html.includes('float zOffset'),
+    "Shared zOffset scroll should be removed"
 );
 
 // 9. Ensure old sphere transforms are removed
@@ -111,6 +115,6 @@ onBeforeCompile(dummyShader);
 assert.strictEqual(dummyShader.uniforms.u_audioTex, uniforms.u_audioTex, "u_audioTex uniform should be attached");
 assert.strictEqual(dummyShader.uniforms.u_time, uniforms.u_time, "u_time uniform should be attached");
 assert.ok(dummyShader.vertexShader.includes("transformed.y *="), "Vertex shader should include transformed.y scaling");
-assert.ok(dummyShader.vertexShader.includes("transformed.z += zOffset;"), "Vertex shader should include transformed.z offset");
+assert.ok(dummyShader.vertexShader.includes("transformed.x += sway * 0.1;"), "Vertex shader should sway each building individually");
 
 console.log("All audio-reactive vertex shader checks passed!");

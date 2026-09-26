@@ -49,18 +49,19 @@ assert.match(
     "bass should be extracted from average of lowest bins"
 );
 
-// 7. Sun scaling formula: 1.0 + (bass * 0.5)
+// 7. Bass brightens the disc. It does not change size.
 assert.match(
     html,
-    /const\s+sunScale\s*=\s*1\.0\s*\+\s*\(\s*bass\s*\*\s*0\.5\s*\);?/,
-    "sunScale should be 1.0 + (bass * 0.5)"
+    /const\s+sunGlow\s*=\s*0\.82\s*\+\s*bass\s*\*\s*0\.18;?/,
+    "sunGlow should be 0.82 + bass * 0.18"
 );
+assert.ok(!html.includes('sun.scale.set'), "Sun should not scale up and down");
 
-// 8. Sun scale applied
+// 8. Rings spin in place
 assert.match(
     html,
-    /sun\.scale\.set\(\s*sunScale\s*,\s*sunScale\s*,\s*sunScale\s*\)/,
-    "sun.scale should be set to (sunScale, sunScale, sunScale)"
+    /ring\.rotation\.z\s*=\s*time\s*\*\s*\(\s*0\.25\s*\+\s*bass\s*\*\s*0\.45\s*\)/,
+    "Ring should spin, faster with bass"
 );
 
 // 9. Check declaration order: currentAudio must be declared before animate() is called
@@ -92,13 +93,12 @@ assert.strictEqual(sun.position.x, 0);
 assert.strictEqual(sun.position.y, 5);
 assert.strictEqual(sun.position.z, -60);
 
-// Test scaling function
-function calculateSunScale(bass) {
-    return 1.0 + (bass * 0.5);
+function sunGlowFor(bass) {
+    return 0.82 + bass * 0.18;
 }
 
-assert.strictEqual(calculateSunScale(0), 1.0, "Scale at bass=0 should be 1.0");
-assert.strictEqual(calculateSunScale(1.0), 1.5, "Scale at bass=1.0 should be 1.5");
-assert.strictEqual(calculateSunScale(2.0), 2.0, "Scale at bass=2.0 should be 2.0");
+assert.strictEqual(sunGlowFor(0), 0.82, "Glow at bass=0 should be 0.82");
+assert.ok(Math.abs(sunGlowFor(1) - 1) < 1e-9, "Glow at bass=1 should be 1");
+assert.ok(sunGlowFor(1) - sunGlowFor(0) < 0.2, "Bass should only brighten the sun a little");
 
 console.log("All bass sun checks passed!");
