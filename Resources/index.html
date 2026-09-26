@@ -188,17 +188,33 @@
     
     scene.add(instancedMesh);
     
+    // The Bass Sun (background stark white sphere)
+    const sunGeo = new THREE.SphereGeometry(10, 32, 32);
+    const sunMat = new THREE.MeshBasicMaterial({ color: 0xffffff }); // Unlit stark white
+    const sun = new THREE.Mesh(sunGeo, sunMat);
+    sun.position.set(0, 5, -60); // Far back
+    scene.add(sun);
+
     // Adjust camera for bird's-eye view
     camera.position.set(0, 15, 5);
     camera.lookAt(0, 0, -20);
 
     const clock = new THREE.Clock();
 
+    let currentAudio = new Array(numBins).fill(0);
+
     function animate() {
         requestAnimationFrame(animate);
         
         const time = clock.getElapsedTime();
         uniforms.u_time.value = time;
+        
+        // Extract bass from the lowest bin
+        const bass = currentAudio[0] || 0; 
+        
+        // Scale sun based on bass, minimum scale 1.0
+        const sunScale = 1.0 + (bass * 0.5);
+        sun.scale.set(sunScale, sunScale, sunScale);
 
         renderer.render(scene, camera);
     }
@@ -210,7 +226,6 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    let currentAudio = new Array(numBins).fill(0);
     window.updateAudio = function(data) {
         if (!data || data.length < numBins) return;
         
