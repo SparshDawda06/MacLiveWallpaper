@@ -25,7 +25,7 @@
     const worldCamera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
     worldCamera.position.z = 20;
 
-    // 1. Central Chromatic Glitch Sphere -> Shifted Right
+    // 1. Central Chromatic Glitch Sphere -> Shifted Right, Darker/Minimal
     const sunGeo = new THREE.SphereGeometry(3.5, 64, 64);
     const sunMat = new THREE.ShaderMaterial({
         uniforms: {
@@ -86,18 +86,19 @@
             void main() {
                 vec3 normal = normalize(vNormal);
                 vec3 viewDir = normalize(vViewPosition);
-                float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 1.2);
+                float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 1.5);
                 
                 float noiseVal = snoise(vUv * 8.0 - u_time * 0.2);
                 float grain = random(vUv * 200.0 + u_time) * 0.3;
                 
-                float val = max(noiseVal, 0.0) * 0.8 + fresnel + grain + u_bass * 0.5;
+                // Darker, more 3D glitch sphere. Not flat white!
+                float val = max(noiseVal, 0.0) * 0.25 + fresnel * 0.7 + grain * 0.15 + u_bass * 0.3;
                 vec3 finalColor = vec3(val); // Silver/White
                 
                 float mask = smoothstep(-0.1, 0.1, snoise(vUv * 5.0 + u_time * 0.1));
                 float alpha = max(mask * 0.8, fresnel) + u_bass * 0.8;
                 
-                gl_FragColor = vec4(finalColor * mask * 1.5, min(alpha, 1.0));
+                gl_FragColor = vec4(finalColor * mask * 2.0, min(alpha, 1.0));
             }
         `
     });
@@ -180,6 +181,13 @@
 
     function updateLyrics(text, bassPulse) {
         lyricCtx.clearRect(0, 0, lyricCanvas.width, lyricCanvas.height);
+        
+        // Hide lyrics if no audio is playing
+        if (bassPulse < 0.02) {
+            lyricTex.needsUpdate = true;
+            return;
+        }
+
         lyricCtx.fillStyle = '#ffffff';
         lyricCtx.font = '900 140px "Arial Black", Impact, sans-serif';
         lyricCtx.textAlign = 'center';
@@ -311,7 +319,7 @@
           vec3 base = texture2D(uTex, vUv).rgb;
           vec3 outc = base;
           
-          // SINGLE LEFT LENS (Tall bracket shape framing the lyrics)
+          // SINGLE LEFT LENS (Angled window framing the lyrics)
           float a1 = 0.0;
           // Positioned on the left side (0.25)
           vec2 center1 = vec2(0.25, 0.5); 
@@ -335,12 +343,12 @@
         uZoom: { value: 0 },
         uRimInward: { value: 0 },
         
-        // SHAPE PARAMETERS -> Extremely tall so it forms brackets instead of a circle
-        uSizeX: { value: 0.35 }, 
-        uSizeY: { value: 5.0 }, // Massive height ensures top/bottom are never seen
-        uShape: { value: 1.0 }, // Rounded Box mode ensures straight vertical bracket lines
-        uSquareRound: { value: 0.5 }, 
-        uRotation: { value: 0 } // No rotation, perfectly vertical brackets
+        // SHAPE PARAMETERS -> Exactly like the picture, Angled rounded rectangle that doesn't go fully out of frame
+        uSizeX: { value: 0.565 }, 
+        uSizeY: { value: 0.8 }, // Short enough that you see the top and bottom corners!
+        uShape: { value: 1.0 }, // Rounded Box mode
+        uSquareRound: { value: 0.4 }, 
+        uRotation: { value: 65 * Math.PI / 180 } // Angled at 65 degrees like the reference
     };
 
     const lensMat = new THREE.ShaderMaterial({
@@ -387,13 +395,17 @@
         dustParticles.rotation.y = time * 0.05 + bass * 0.05;
         dustParticles.rotation.x = time * 0.02;
 
-        // Kinetic Lyrics Logic
+        // Kinetic Lyrics Logic (Flowing)
         if (kick && (time - lastLyricTime) > 0.4) {
             currentLyricIndex = (currentLyricIndex + 1) % lyricStrings.length;
             lastLyricTime = time;
             lyricPlaneFg.scale.set(1.4, 1.4, 1.4);
         }
         
+        // Let them flow/bob gently along the Y axis
+        lyricPlaneFg.position.y = Math.sin(time * 1.5) * 0.5;
+        lyricPlaneBg.position.y = Math.sin(time * 1.5) * 0.5;
+
         lyricPlaneFg.scale.lerp(new THREE.Vector3(1, 1, 1), 0.1);
         lyricPlaneBg.scale.set(1.5 + bass*0.5, 1.5 + bass*0.5, 1);
         
@@ -407,9 +419,6 @@
         lensUniforms.uBass.value = bass;
         lensUniforms.uZoom.value = bass * 0.2; 
         lensUniforms.uDispersion.value = 11.0 + bass * 2.0;
-        
-        // Slightly wobble the width of the brackets to the beat
-        lensUniforms.uSizeX.value = 0.35 + bass * 0.05;
 
         // 1. Render World to Render Target
         renderer.setRenderTarget(rt);
