@@ -18,14 +18,14 @@
 
     let rt = new THREE.WebGLRenderTarget(window.innerWidth * window.devicePixelRatio, window.innerHeight * window.devicePixelRatio);
 
-    // --- SCENE 1: THE WORLD (Sphere, Rings, Dust, Fog) ---
+    // --- SCENE 1: THE WORLD (Sphere, Rings, Dust, Fog, Lyrics) ---
     const worldScene = new THREE.Scene();
-    worldScene.background = new THREE.Color(0x000000); // Pure black
-    worldScene.fog = new THREE.FogExp2(0x000000, 0.04); // Soft fog fading to black
+    worldScene.background = new THREE.Color(0x000000); 
+    worldScene.fog = new THREE.FogExp2(0x000000, 0.04); 
     const worldCamera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
     worldCamera.position.z = 20;
 
-    // Central Chromatic Glitch Sphere
+    // 1. Central Chromatic Glitch Sphere -> Shifted Right
     const sunGeo = new THREE.SphereGeometry(3.5, 64, 64);
     const sunMat = new THREE.ShaderMaterial({
         uniforms: {
@@ -35,7 +35,7 @@
         transparent: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
-        fog: true, // Let it fade slightly into the fog
+        fog: true, 
         vertexShader: `
             varying vec2 vUv;
             varying vec3 vNormal;
@@ -51,7 +51,6 @@
         fragmentShader: `
             uniform float u_time;
             uniform float u_bass;
-            // ... (rest is same, but keeping fog support requires a small tweak if we used three's built-in fog, but ShaderMaterial doesn't auto-apply fog unless we include the chunks. Let's just manually apply distance fading instead of full fog chunks to keep it clean)
             varying vec2 vUv;
             varying vec3 vNormal;
             varying vec3 vViewPosition;
@@ -89,7 +88,6 @@
                 vec3 viewDir = normalize(vViewPosition);
                 float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 1.2);
                 
-                // Monochrome metallic noise
                 float noiseVal = snoise(vUv * 8.0 - u_time * 0.2);
                 float grain = random(vUv * 200.0 + u_time) * 0.3;
                 
@@ -104,35 +102,37 @@
         `
     });
     const sun = new THREE.Mesh(sunGeo, sunMat);
+    sun.position.x = 8; // Shifted right
     worldScene.add(sun);
 
-    // Atom Rings (Thin and white)
+    // Atom Rings (Thin and white) -> Shifted Right
     const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending });
     
     const ring1 = new THREE.Mesh(new THREE.TorusGeometry(4.2, 0.015, 8, 100), ringMat);
     ring1.rotation.x = Math.PI / 2.5;
+    ring1.position.x = 8;
     worldScene.add(ring1);
     
     const ring2 = new THREE.Mesh(new THREE.TorusGeometry(4.7, 0.015, 8, 100), ringMat);
     ring2.rotation.y = Math.PI / 3;
+    ring2.position.x = 8;
     worldScene.add(ring2);
     
     const ring3 = new THREE.Mesh(new THREE.TorusGeometry(5.2, 0.015, 8, 100), ringMat);
     ring3.rotation.x = -Math.PI / 3;
     ring3.rotation.y = Math.PI / 4;
+    ring3.position.x = 8;
     worldScene.add(ring3);
 
-    // Ethereal Dust Particles
+    // Ethereal Dust Particles (Everywhere)
     const particlesGeo = new THREE.BufferGeometry();
     const particlesCount = 2500;
     const posArray = new Float32Array(particlesCount * 3);
     for(let i = 0; i < particlesCount * 3; i++) {
-        // Spread across a wide volume
         posArray[i] = (Math.random() - 0.5) * 50;
     }
     particlesGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
     
-    // Create a soft glowing dot texture programmatically
     const pCanvas = document.createElement('canvas');
     pCanvas.width = 32; pCanvas.height = 32;
     const pCtx = pCanvas.getContext('2d');
@@ -154,7 +154,48 @@
     const dustParticles = new THREE.Points(particlesGeo, particlesMat);
     worldScene.add(dustParticles);
 
-    // --- SCENE 2: DUAL LIQUID GLASS LENSES ---
+    // 2. Kinetic Lyrics System -> Shifted Left
+    const lyricStrings = [
+        "WORK IT", "MAKE IT", "DO IT", "MAKES US",
+        "HARDER", "BETTER", "FASTER", "STRONGER"
+    ];
+    let currentLyricIndex = 0;
+    
+    const lyricCanvas = document.createElement('canvas');
+    lyricCanvas.width = 1024;
+    lyricCanvas.height = 256;
+    const lyricCtx = lyricCanvas.getContext('2d');
+    const lyricTex = new THREE.CanvasTexture(lyricCanvas);
+    lyricTex.minFilter = THREE.LinearFilter;
+    
+    const lyricMat = new THREE.MeshBasicMaterial({ map: lyricTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+    
+    const lyricPlaneBg = new THREE.Mesh(new THREE.PlaneGeometry(32, 8), lyricMat);
+    lyricPlaneBg.position.set(-8, 0, -5); // Left side, behind
+    worldScene.add(lyricPlaneBg);
+    
+    const lyricPlaneFg = new THREE.Mesh(new THREE.PlaneGeometry(40, 10), lyricMat);
+    lyricPlaneFg.position.set(-8, 0, 8); // Left side, in front
+    worldScene.add(lyricPlaneFg);
+
+    function updateLyrics(text, bassPulse) {
+        lyricCtx.clearRect(0, 0, lyricCanvas.width, lyricCanvas.height);
+        lyricCtx.fillStyle = '#ffffff';
+        lyricCtx.font = '900 140px "Arial Black", Impact, sans-serif';
+        lyricCtx.textAlign = 'center';
+        lyricCtx.textBaseline = 'middle';
+        
+        const glow = Math.floor(bassPulse * 40);
+        lyricCtx.shadowColor = `rgba(0, 255, 200, ${bassPulse})`;
+        lyricCtx.shadowBlur = glow;
+        
+        lyricCtx.scale(1.1, 1);
+        lyricCtx.fillText(text, lyricCanvas.width / 2.2, lyricCanvas.height / 2);
+        lyricCtx.scale(1/1.1, 1);
+        lyricTex.needsUpdate = true;
+    }
+
+    // --- SCENE 2: BRACKET LIQUID GLASS LENS (Left Side) ---
     const lensScene = new THREE.Scene();
     const lensCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
@@ -270,9 +311,10 @@
           vec3 base = texture2D(uTex, vUv).rgb;
           vec3 outc = base;
           
-          // SINGLE CENTER LENS (creates side arcs)
+          // SINGLE LEFT LENS (Tall bracket shape framing the lyrics)
           float a1 = 0.0;
-          vec2 center1 = vec2(0.5, 0.5); 
+          // Positioned on the left side (0.25)
+          vec2 center1 = vec2(0.25, 0.5); 
           vec3 c1 = discLens(center1, uAspect, a1);
           outc = mix(outc, c1, a1);
           
@@ -287,18 +329,18 @@
         uTime: { value: 0 },
         uBass: { value: 0 },
         
-        // DEFAULT COMPONENT VALUES
+        // COMPONENT VALUES
         uDispersion: { value: 11.0 }, 
-        uRimTangential: { value: 0.6 }, 
+        uRimTangential: { value: 0.5 }, 
         uZoom: { value: 0 },
         uRimInward: { value: 0 },
         
-        // SHAPE PARAMETERS
-        uSizeX: { value: 0.565 }, 
-        uSizeY: { value: 1.0 }, 
-        uShape: { value: 0 },
-        uSquareRound: { value: 0 },
-        uRotation: { value: 65 * Math.PI / 180 } 
+        // SHAPE PARAMETERS -> Extremely tall so it forms brackets instead of a circle
+        uSizeX: { value: 0.35 }, 
+        uSizeY: { value: 5.0 }, // Massive height ensures top/bottom are never seen
+        uShape: { value: 1.0 }, // Rounded Box mode ensures straight vertical bracket lines
+        uSquareRound: { value: 0.5 }, 
+        uRotation: { value: 0 } // No rotation, perfectly vertical brackets
     };
 
     const lensMat = new THREE.ShaderMaterial({
@@ -324,6 +366,7 @@
 
     // --- ANIMATION LOOP ---
     const clock = new THREE.Clock();
+    let lastLyricTime = 0;
 
     function animate() {
         requestAnimationFrame(animate);
@@ -331,6 +374,7 @@
         
         // Extract bass
         const bass = ((currentAudio[0] || 0) + (currentAudio[1] || 0)) / 2;
+        const kick = currentAudio[0] > 0.65; // A threshold for a "kick drum" hit
 
         // Animate Sphere, Rings, and Dust
         sunMat.uniforms.u_time.value = time;
@@ -343,18 +387,29 @@
         dustParticles.rotation.y = time * 0.05 + bass * 0.05;
         dustParticles.rotation.x = time * 0.02;
 
-        // Animate Single Liquid Glass Lens
+        // Kinetic Lyrics Logic
+        if (kick && (time - lastLyricTime) > 0.4) {
+            currentLyricIndex = (currentLyricIndex + 1) % lyricStrings.length;
+            lastLyricTime = time;
+            lyricPlaneFg.scale.set(1.4, 1.4, 1.4);
+        }
+        
+        lyricPlaneFg.scale.lerp(new THREE.Vector3(1, 1, 1), 0.1);
+        lyricPlaneBg.scale.set(1.5 + bass*0.5, 1.5 + bass*0.5, 1);
+        
+        lyricPlaneFg.rotation.z = Math.sin(time) * 0.05;
+        lyricPlaneBg.rotation.z = Math.cos(time * 0.8) * -0.05;
+
+        updateLyrics(lyricStrings[currentLyricIndex], bass);
+
+        // Animate Single Liquid Glass Bracket
         lensUniforms.uTime.value = time;
         lensUniforms.uBass.value = bass;
-        
-        // Very slight bass pulse to zoom
         lensUniforms.uZoom.value = bass * 0.2; 
-        
-        // Gentle rotation wobble
-        lensUniforms.uRotation.value = (65 * Math.PI / 180) + Math.sin(time * 0.3) * 0.03 + bass * 0.05;
-        
-        // Slight dispersion pulse on bass (kept close to default 11)
         lensUniforms.uDispersion.value = 11.0 + bass * 2.0;
+        
+        // Slightly wobble the width of the brackets to the beat
+        lensUniforms.uSizeX.value = 0.35 + bass * 0.05;
 
         // 1. Render World to Render Target
         renderer.setRenderTarget(rt);
