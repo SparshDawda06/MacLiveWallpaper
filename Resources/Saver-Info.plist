@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.voxel.premiumscreensaver</string>
+    <key>CFBundleName</key>
+    <string>WallpaperSaver</string>
+    <key>CFBundleExecutable</key>
+    <string>WallpaperSaver</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>NSPrincipalClass</key>
+    <string>VoxelSaverView</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Wallpaper reads system audio so the voxels can move with your music. It does not record the screen or the microphone.</string>
+</dict>
+</plist>
