@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Cyber-City Visualizer</title>
+    <title>Liquid Glass Visualizer</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000000; }
         canvas { display: block; }
@@ -11,371 +11,364 @@
 </head>
 <body>
 <script>
-    const scene = new THREE.Scene();
-    // Add fog to fade out distant instances into black
-    scene.fog = new THREE.FogExp2(0x000000, 0.015);
-
-    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-
-    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: "high-performance" });
+    // --- MAIN RENDERER ---
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.outputEncoding = THREE.sRGBEncoding;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
     document.body.appendChild(renderer.domElement);
 
-    // Lighting (crucial for high-contrast monochrome reflections)
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
-    scene.add(ambientLight);
+    // --- RENDER TARGET (For Post-Processing Lens) ---
+    let rt = new THREE.WebGLRenderTarget(window.innerWidth * window.devicePixelRatio, window.innerHeight * window.devicePixelRatio);
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
-    dirLight.position.set(0, 50, 50); // Overhead/Front stark white light
-    scene.add(dirLight);
-    
-    const backLight = new THREE.DirectionalLight(0xffffff, 1.0);
-    backLight.position.set(0, 10, -50);
-    scene.add(backLight);
+    // --- SCENE 1: THE WORLD (Globe + Lyrics) ---
+    const worldScene = new THREE.Scene();
+    // A dark, moody background
+    worldScene.background = new THREE.Color(0x050510);
+    const worldCamera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+    worldCamera.position.z = 15;
 
-    // Audio Texture (32 bins)
-    const numBins = 32;
-    const audioDataArray = new Uint8Array(numBins * 4); 
-    const audioTexture = new THREE.DataTexture(audioDataArray, numBins, 1, THREE.RGBAFormat);
-    audioTexture.minFilter = THREE.LinearFilter;
-    audioTexture.magFilter = THREE.LinearFilter;
-    audioTexture.generateMipmaps = false;
-    audioTexture.wrapS = THREE.ClampToEdgeWrapping;
-    audioTexture.wrapT = THREE.ClampToEdgeWrapping;
-    audioTexture.needsUpdate = true;
-    
-    const uniforms = {
-        u_audioTex: { value: audioTexture },
-        u_time: { value: 0 }
-    };
-
-    // Material with high metalness for high contrast reflections
-    const material = new THREE.MeshStandardMaterial({
-        color: 0x111111, // Dark grey/black for high contrast reflections
+    // The Central Globe
+    const globeGeo = new THREE.SphereGeometry(2.5, 64, 64);
+    const globeMat = new THREE.MeshStandardMaterial({ 
+        color: 0x111111,
+        emissive: 0x0044ff,
+        emissiveIntensity: 0.5,
+        roughness: 0.2,
         metalness: 0.9,
-        roughness: 0.1,
+        wireframe: true // Makes it look holographic/cyber
+    });
+    const globe = new THREE.Mesh(globeGeo, globeMat);
+    worldScene.add(globe);
+    
+    // A solid inner core for the globe
+    const coreGeo = new THREE.SphereGeometry(2.4, 32, 32);
+    const coreMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+    const core = new THREE.Mesh(coreGeo, coreMat);
+    worldScene.add(core);
+
+    const light = new THREE.PointLight(0xffffff, 2, 50);
+    light.position.set(5, 5, 5);
+    worldScene.add(light);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+    worldScene.add(ambientLight);
+
+    // Flowing Lyrics/Text
+    function createTextPlane(text, color) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 1024;
+        canvas.height = 128;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.font = 'Bold 80px Arial';
+        ctx.fillStyle = color;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        // Add a glow to the text
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 20;
+        ctx.fillText(text, canvas.width/2, canvas.height/2);
+        
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, blending: THREE.AdditiveBlending });
+        // Make the plane large enough
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(16, 2), mat);
+        return mesh;
+    }
+    
+    const lyrics = [
+        "FEEL THE RYTHM", "LOST IN THE ECHO", "LIQUID GLASS", 
+        "CYBER DELUSION", "AUDIO WAVES", "SYSTEM OVERRIDE"
+    ];
+    const textMeshes = [];
+    const colors = ['#00d4ff', '#ff0055', '#bb00ff', '#00ffaa'];
+    
+    lyrics.forEach((t, i) => {
+        const c = colors[i % colors.length];
+        const mesh = createTextPlane(t, c);
+        // Position them across the screen in different Z planes
+        mesh.position.set(
+            (Math.random() - 0.5) * 40, 
+            (Math.random() - 0.5) * 8, 
+            (Math.random() - 0.5) * 10 - 2 // Between globe and camera, or behind
+        );
+        worldScene.add(mesh);
+        textMeshes.push({ 
+            mesh, 
+            speed: 0.05 + Math.random() * 0.05,
+            dir: Math.random() > 0.5 ? 1 : -1 
+        });
     });
 
-    // We inject custom shader code to displace instances and make them glow to the beat
-    material.onBeforeCompile = (shader) => {
-        shader.uniforms.u_audioTex = uniforms.u_audioTex;
-        shader.uniforms.u_time = uniforms.u_time;
-        
-        shader.vertexShader = `
-            uniform sampler2D u_audioTex;
-            uniform float u_time;
-            varying float vBand;
-            
-            // Simplex 3D Noise 
-            vec4 permute(vec4 x){return mod(((x*34.0)+1.0)*x, 289.0);}
-            vec4 taylorInvSqrt(vec4 r){return 1.79284291400159 - 0.85373472095314 * r;}
-            float snoise(vec3 v){ 
-                const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;
-                const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
-                vec3 i  = floor(v + dot(v, C.yyy) );
-                vec3 x0 = v - i + dot(i, C.xxx) ;
-                vec3 g = step(x0.yzx, x0.xyz);
-                vec3 l = 1.0 - g;
-                vec3 i1 = min( g.xyz, l.zxy );
-                vec3 i2 = max( g.xyz, l.zxy );
-                vec3 x1 = x0 - i1 + 1.0 * C.xxx;
-                vec3 x2 = x0 - i2 + 2.0 * C.xxx;
-                vec3 x3 = x0 - 1.0 + 3.0 * C.xxx;
-                i = mod(i, 289.0 ); 
-                vec4 p = permute( permute( permute( 
-                            i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
-                        + i.y + vec4(0.0, i1.y, i2.y, 1.0 )) 
-                        + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
-                float n_ = 1.0/7.0; // N=7
-                vec3  ns = n_ * D.wyz - D.xzx;
-                vec4 j = p - 49.0 * floor(p * ns.z *ns.z);  //  mod(p,N*N)
-                vec4 x_ = floor(j * ns.z);
-                vec4 y_ = floor(j - 7.0 * x_ );    // mod(j,N)
-                vec4 x = x_ *ns.x + ns.yyyy;
-                vec4 y = y_ *ns.x + ns.yyyy;
-                vec4 h = 1.0 - abs(x) - abs(y);
-                vec4 b0 = vec4( x.xy, y.xy );
-                vec4 b1 = vec4( x.zw, y.zw );
-                vec4 s0 = floor(b0)*2.0 + 1.0;
-                vec4 s1 = floor(b1)*2.0 + 1.0;
-                vec4 sh = -step(h, vec4(0.0));
-                vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
-                vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
-                vec3 p0 = vec3(a0.xy,h.x);
-                vec3 p1 = vec3(a0.zw,h.y);
-                vec3 p2 = vec3(a1.xy,h.z);
-                vec3 p3 = vec3(a1.zw,h.w);
-                vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
-                p0 *= norm.x;
-                p1 *= norm.y;
-                p2 *= norm.z;
-                p3 *= norm.w;
-                vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
-                m = m * m;
-                return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), 
-                                            dot(p2,x2), dot(p3,x3) ) );
-            }
-            
-        ` + shader.vertexShader;
-        
-        shader.vertexShader = shader.vertexShader.replace(
-            `#include <begin_vertex>`,
-            `
-            vec3 transformed = vec3(position);
-            
-            // Get base position of the instance on the grid
-            vec3 instanceBasePos = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
-            
-            float xMap = clamp((instanceBasePos.x + 38.0) / 76.0, 0.0, 1.0);
-            float band = texture2D(u_audioTex, vec2(xMap, 0.5)).r;
-            
-            // Pass band to fragment shader for glowing
-            vBand = band;
-            
-            // Noise fallback for silence
-            float noiseDisp = snoise(vec3(instanceBasePos.x * 0.1, instanceBasePos.z * 0.1, u_time * 0.2)) * 0.5;
-            
-            float phase = instanceBasePos.x * 0.37 + instanceBasePos.z * 0.23;
-            float sway = sin(u_time * 1.35 + phase);
-            float spike = clamp(max(noiseDisp, band * 0.7), 0.0, 0.8);
-            
-            // Scale the Y axis of the building
-            transformed.y *= 1.0 + spike;
-            // Shift up so it grows from the base
-            transformed.y += (1.0 + spike) * 0.5 - 0.5;
-            transformed.y += sway * 0.08;
-            transformed.x += sway * 0.1;
-            transformed.z += cos(u_time * 0.95 + phase) * 0.1;
-            `
-        );
-        
-        shader.fragmentShader = `
-            varying float vBand;
-        ` + shader.fragmentShader;
-        
-        shader.fragmentShader = shader.fragmentShader.replace(
-            `#include <emissivemap_fragment>`,
-            `#include <emissivemap_fragment>
-             // Add cyan/blue neon glow based on the audio band and Y height
-             // Taller buildings glow brighter!
-             vec3 audioGlow = vec3(0.0, 0.7, 1.0) * pow(vBand, 1.5) * 3.0;
-             totalEmissiveRadiance += audioGlow;
-            `
-        );
+    // --- SCENE 2: LIQUID GLASS LENS SHADER ---
+    const lensScene = new THREE.Scene();
+    const lensCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+    const LENS_VERTEX = `
+        varying vec2 vUv;
+        void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
+    `;
+
+    const LENS_FRAGMENT = `
+        #define PI 3.14159265
+        precision highp float;
+        varying vec2 vUv;
+        uniform sampler2D uTex;
+        uniform vec2 uRes;
+        uniform vec2 uCenter;
+        uniform float uSizeX;
+        uniform float uSizeY;
+        uniform float uAspect;
+        uniform float uZoom;
+        uniform float uDispersion;
+        uniform float uBlur;
+        uniform float uGlow;
+        uniform float uWhiteGlow;
+        uniform float uNovaSize;
+        uniform float uBlueRing;
+        uniform float uRingRadius;
+        uniform float uRingWidth;
+        uniform float uShimmer;
+        uniform float uShimmerFreq;
+        uniform float uShimmerSpeed;
+        uniform float uShimmerDepth;
+        uniform float uTime;
+        uniform float uRimStart;
+        uniform float uRimTangential;
+        uniform float uRimInward;
+        uniform float uRimFreq1;
+        uniform float uRimFreq2;
+        uniform vec3 uBlueColor;
+        uniform float uRimLine;
+        uniform float uRimLinePos;
+        uniform float uRimLineWidth;
+        uniform float uVignette;
+        uniform float uVignetteSize;
+        uniform float uShape;
+        uniform float uSquareRound;
+        uniform float uRotation;
+        uniform int uSamples;
+
+        const int MAX_SAMPLES = 16;
+
+        float sdRoundBox(vec2 p, vec2 b, float r){
+          vec2 q = abs(p) - b + r;
+          return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+        }
+
+        vec3 discLens(vec2 center, float aspectCorrect, out float outA) {
+          vec2 p = (vUv - center);
+          p.x *= aspectCorrect;
+          float ca = cos(uRotation), sa = sin(uRotation);
+          p = mat2(ca, -sa, sa, ca) * p;
+          vec2 halfSize = vec2(uSizeX, uSizeY);
+          float dist = length(p / halfSize);
+          outA = 0.0;
+
+          float maskND;
+          if (uShape > 0.5) {
+            float corner = min(uSizeX, uSizeY) * clamp(uSquareRound, 0.0, 1.0);
+            float sd = sdRoundBox(p, halfSize, corner);
+            maskND = 1.0 + sd / min(uSizeX, uSizeY);
+          } else {
+            maskND = dist;
+          }
+          if (maskND > 1.0) return vec3(0.0);
+
+          float shapeND = clamp(maskND, 0.0, 1.0);
+          float nd = clamp(dist, 0.0, 1.0);
+          vec2 offset = vUv - center;
+          vec2 radialDir = normalize(offset + 1e-6);
+          vec2 tangentDir = vec2(-radialDir.y, radialDir.x);
+          float angle = atan(p.y, p.x);
+
+          float pull = uZoom * 0.30 * (nd * nd);
+          float rimStrength = smoothstep(uRimStart, 1.0, nd);
+          float fluidWave = sin(angle * uRimFreq1 + uTime*2.0) * 0.55 + sin(angle * uRimFreq2 - uTime) * 0.25;
+          float rScreen = (uSizeX + uSizeY) * 0.5;
+          vec2 rimOff = tangentDir * fluidWave * rimStrength * rScreen * uRimTangential;
+          vec2 rimPull = -radialDir * rimStrength * rScreen * uRimInward;
+
+          vec2 baseUV = center + offset * (1.0 - pull) + rimOff + rimPull;
+
+          float rimMask = smoothstep(0.55, 1.0, nd);
+          vec2 dispDir = offset * uDispersion * 0.004 * rimMask;
+          int N = uSamples;
+          if (N < 2) N = 2;
+          if (N > MAX_SAMPLES) N = MAX_SAMPLES;
+          vec3 col = vec3(0.0);
+          vec3 caW = vec3(0.0);
+          for (int i = 0; i < MAX_SAMPLES; i++) {
+            if (i >= N) break;
+            float t = float(i) / float(N - 1);
+            vec2 sUV = baseUV + dispDir * (t - 0.5);
+            vec3 s = texture2D(uTex, sUV).rgb;
+            vec3 w = vec3(
+              exp(-pow((t - 0.00) / 0.38, 2.0)),
+              exp(-pow((t - 0.50) / 0.38, 2.0)),
+              exp(-pow((t - 1.00) / 0.38, 2.0))
+            );
+            col += s * w;
+            caW += w;
+          }
+          col /= max(caW, vec3(0.001));
+
+          col *= mix(0.91, 1.0, smoothstep(0.0, 0.38, shapeND));
+
+          float r2 = shapeND * shapeND * 0.25;
+          float gs = max(uNovaSize * uGlow * 0.003, 0.004);
+          float nova = exp(-r2 / gs) + exp(-r2 / (gs * 7.0)) * 0.18;
+          nova *= uWhiteGlow * (uGlow / 17.0) * 1.15;
+          col += vec3(nova);
+
+          float dC = shapeND * 0.5;
+          float tR = clamp(uRingRadius, 0.1, 0.49);
+          float rW = max(uRingWidth, 0.003);
+          float ring = exp(-pow((dC - tR) / rW, 2.0));
+          ring *= uBlueRing * (uGlow / 17.0) * 1.8;
+          if (uShimmer > 0.5) ring *= sin(angle * uShimmerFreq + uTime * uShimmerSpeed) * uShimmerDepth + (1.0 - uShimmerDepth);
+          float ringAura = exp(-pow((dC - tR) / (rW * 6.0), 2.0)) * 0.28 * uBlueRing * (uGlow / 17.0);
+          col += uBlueColor * (ring + ringAura);
+          col += vec3(exp(-pow((dC - uRimLinePos) / max(uRimLineWidth, 0.0001), 2.0)) * uRimLine);
+
+          outA = smoothstep(1.0, 0.93, maskND);
+          return col;
+        }
+
+        void main(){
+          vec3 base = texture2D(uTex, vUv).rgb;
+          vec3 outc = base;
+          float a = 0.0;
+          
+          // Generate multiple wobbly lenses
+          vec3 c1 = discLens(uCenter, uAspect, a);
+          outc = mix(outc, c1, a);
+          
+          gl_FragColor = vec4(outc, 1.0);
+        }
+    `;
+
+    const lensUniforms = {
+        uTex: { value: rt.texture },
+        uRes: { value: new THREE.Vector2(window.innerWidth * window.devicePixelRatio, window.innerHeight * window.devicePixelRatio) },
+        uCenter: { value: new THREE.Vector2(0.5, 0.5) },
+        uSizeX: { value: 0.6 },
+        uSizeY: { value: 0.6 },
+        uAspect: { value: window.innerWidth / window.innerHeight },
+        uZoom: { value: 0 },
+        uDispersion: { value: 15 },
+        uBlur: { value: 0 },
+        uGlow: { value: 4.2 },
+        uWhiteGlow: { value: 0.24 },
+        uNovaSize: { value: 12 },
+        uBlueRing: { value: 6 },
+        uRingRadius: { value: 0.49 },
+        uRingWidth: { value: 0.014 },
+        uShimmer: { value: 1 },
+        uShimmerFreq: { value: 12 },
+        uShimmerSpeed: { value: 3.5 },
+        uShimmerDepth: { value: 0.2 },
+        uTime: { value: 0 },
+        uRimStart: { value: 0.578 },
+        uRimTangential: { value: 1.5 }, // INCREASED FOR MORE WAVING
+        uRimInward: { value: 0.2 },
+        uRimFreq1: { value: 2 },
+        uRimFreq2: { value: 4 },
+        uBlueColor: { value: new THREE.Color("#009dff") },
+        uRimLine: { value: 1.4 },
+        uRimLinePos: { value: 0.488 },
+        uRimLineWidth: { value: 0.003 },
+        uVignette: { value: 0 },
+        uVignetteSize: { value: 0.3 },
+        uShape: { value: 0 },
+        uSquareRound: { value: 0 },
+        uRotation: { value: 0 },
+        uSamples: { value: 16 }
     };
 
-    // The single voxel geometry (a skyscraper box)
-    // Make it taller so it looks like a building
-    const boxGeo = new THREE.BoxGeometry(0.8, 1.0, 0.8);
-    
-    // Create grid layout
-    const gridCols = 64;
-    const gridRows = 64;
-    const count = gridCols * gridRows;
-    const spacing = 1.2;
-    
-    const instancedMesh = new THREE.InstancedMesh(boxGeo, material, count);
-    instancedMesh.frustumCulled = false;
-    
-    const dummy = new THREE.Object3D();
-    let index = 0;
-    for (let x = 0; x < gridCols; x++) {
-        for (let z = 0; z < gridRows; z++) {
-            // Center the grid around X=0, start Z from close to camera pushing back
-            const posX = (x - gridCols / 2) * spacing;
-            const posZ = -z * spacing; // Negative Z goes into the screen
-            const posY = 0;
-            
-            dummy.position.set(posX, posY, posZ);
-            dummy.updateMatrix();
-            instancedMesh.setMatrixAt(index, dummy.matrix);
-            index++;
-        }
-    }
-    instancedMesh.instanceMatrix.needsUpdate = true;
-    
-    scene.add(instancedMesh);
-    
-    // The Bass Sun (chromatic holographic glitch sphere)
-    const sunGeo = new THREE.SphereGeometry(10, 64, 64);
-    const sunMat = new THREE.ShaderMaterial({
-        uniforms: {
-            u_time: { value: 0 },
-            u_bass: { value: 0 }
-        },
-        transparent: true,
-        blending: THREE.AdditiveBlending,
+    const lensMat = new THREE.ShaderMaterial({
+        uniforms: lensUniforms,
+        vertexShader: LENS_VERTEX,
+        fragmentShader: LENS_FRAGMENT,
         depthWrite: false,
-        fog: false,
-        vertexShader: `
-            varying vec2 vUv;
-            varying vec3 vNormal;
-            varying vec3 vViewPosition;
-            void main() {
-                vUv = uv;
-                vNormal = normalize(normalMatrix * normal);
-                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-                vViewPosition = -mvPosition.xyz;
-                gl_Position = projectionMatrix * mvPosition;
-            }
-        `,
-        fragmentShader: `
-            uniform float u_time;
-            uniform float u_bass;
-            varying vec2 vUv;
-            varying vec3 vNormal;
-            varying vec3 vViewPosition;
-            
-            // Simplex noise for base texture
-            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-            vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-            vec3 permute(vec3 x) { return mod289(((x*34.0)+1.0)*x); }
-            float snoise(vec2 v) {
-                const vec4 C = vec4(0.211324865405187, 0.366025403784439, -0.577350269189626, 0.024390243902439);
-                vec2 i  = floor(v + dot(v, C.yy) );
-                vec2 x0 = v -   i + dot(i, C.xx);
-                vec2 i1;
-                i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
-                vec4 x12 = x0.xyxy + C.xxzz;
-                x12.xy -= i1;
-                i = mod289(i);
-                vec3 p = permute( permute( i.y + vec3(0.0, i1.y, 1.0 )) + i.x + vec3(0.0, i1.x, 1.0 ));
-                vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
-                m = m*m ;
-                m = m*m ;
-                vec3 x = 2.0 * fract(p * C.www) - 1.0;
-                vec3 h = abs(x) - 0.5;
-                vec3 ox = floor(x + 0.5);
-                vec3 a0 = x - ox;
-                m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
-                vec3 g;
-                g.x  = a0.x  * x0.x  + h.x  * x0.y;
-                g.yz = a0.yz * x12.xz + h.yz * x12.yw;
-                return 130.0 * dot(m, g);
-            }
-
-            float random(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123); }
-
-            void main() {
-                vec3 normal = normalize(vNormal);
-                vec3 viewDir = normalize(vViewPosition);
-                
-                // Stronger Fresnel for glowing edge
-                float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 1.2);
-                
-                // Chromatic aberration offset
-                float offset = 0.03 + u_bass * 0.1;
-                
-                // Texture for R, G, B channels with offsets (color fringing effect)
-                // Higher frequency noise for sharper glitch patches
-                float rNoise = snoise(vUv * 8.0 + vec2(offset, 0.0) - u_time * 0.2);
-                float gNoise = snoise(vUv * 8.0 - u_time * 0.2);
-                float bNoise = snoise(vUv * 8.0 + vec2(-offset, 0.0) - u_time * 0.2);
-                
-                // Static grain
-                float grain = random(vUv * 200.0 + u_time) * 0.3;
-                
-                // Base colors with glitch
-                float r = max(rNoise, 0.0) * 0.8 + fresnel + grain;
-                float g = max(gNoise, 0.0) * 0.8 + fresnel + grain;
-                float b = max(bNoise, 0.0) * 0.8 + fresnel + grain;
-                
-                // Intensify based on audio
-                r += u_bass * 0.7;
-                g += u_bass * 0.3; // keep green lower for red/blue/purple look
-                b += u_bass * 0.9;
-                
-                vec3 finalColor = vec3(r, g, b);
-                
-                // Sharp Cutout mask for the dark textured look
-                float mask = smoothstep(-0.1, 0.1, snoise(vUv * 5.0 + u_time * 0.1));
-                
-                // Opacity governed by mask and fresnel
-                float alpha = max(mask * 0.8, fresnel) + u_bass * 0.8;
-                
-                gl_FragColor = vec4(finalColor * mask * 1.5, min(alpha, 1.0));
-            }
-        `
+        depthTest: false
     });
-    const sun = new THREE.Mesh(sunGeo, sunMat);
-    sun.position.set(0, 5, -60); // Far back
-    scene.add(sun);
 
-    // Atom-like orbital rings - made thicker and neon tinted
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0x88ccff, fog: false, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
-    const ringMat2 = new THREE.MeshBasicMaterial({ color: 0xff88cc, fog: false, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
-    const ringMat3 = new THREE.MeshBasicMaterial({ color: 0xccff88, fog: false, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
-    
-    // Thicker toruses (0.15 radius instead of 0.06)
-    const ring1 = new THREE.Mesh(new THREE.TorusGeometry(12, 0.15, 8, 100), ringMat);
-    ring1.rotation.x = Math.PI / 2.5;
-    ring1.position.copy(sun.position);
-    scene.add(ring1);
-    
-    const ring2 = new THREE.Mesh(new THREE.TorusGeometry(13.5, 0.15, 8, 100), ringMat2);
-    ring2.rotation.y = Math.PI / 3;
-    ring2.position.copy(sun.position);
-    scene.add(ring2);
-    
-    const ring3 = new THREE.Mesh(new THREE.TorusGeometry(15, 0.15, 8, 100), ringMat3);
-    ring3.rotation.x = -Math.PI / 3;
-    ring3.rotation.y = Math.PI / 4;
-    ring3.position.copy(sun.position);
-    scene.add(ring3);
+    const lensQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), lensMat);
+    lensScene.add(lensQuad);
 
-    // Adjust camera for bird's-eye view
-    camera.position.set(0, 15, 5);
-    camera.lookAt(0, 0, -20);
-
-    const clock = new THREE.Clock();
-
+    // --- AUDIO SYSTEM ---
+    const numBins = 32;
     let currentAudio = new Array(numBins).fill(0);
+    window.updateAudio = function(data) {
+        if (!data) return;
+        for (let i = 0; i < Math.min(numBins, data.length); i++) {
+            currentAudio[i] = currentAudio[i] * 0.7 + data[i] * 0.3;
+        }
+    };
+
+    // --- ANIMATION LOOP ---
+    const clock = new THREE.Clock();
 
     function animate() {
         requestAnimationFrame(animate);
-        
         const time = clock.getElapsedTime();
-        uniforms.u_time.value = time;
         
-        // Extract bass from the lowest bins
+        // Extract audio bass
         const bass = ((currentAudio[0] || 0) + (currentAudio[1] || 0)) / 2;
-        
-        // Update the sun shader
-        sunMat.uniforms.u_time.value = time;
-        sunMat.uniforms.u_bass.value = bass;
-        
-        // Spin the atom rings
-        ring1.rotation.z += 0.005 + bass * 0.015;
-        ring2.rotation.x += 0.003 + bass * 0.01;
-        ring3.rotation.y -= 0.007 + bass * 0.015;
 
-        renderer.render(scene, camera);
+        // Animate Globe
+        globe.rotation.y = time * 0.5;
+        globe.rotation.x = time * 0.2;
+        globeMat.emissiveIntensity = 0.5 + bass * 2.0;
+        const scale = 1.0 + bass * 0.1;
+        globe.scale.set(scale, scale, scale);
+
+        // Animate Lyrics
+        textMeshes.forEach(obj => {
+            obj.mesh.position.x += obj.speed * obj.dir * (1.0 + bass * 2.0);
+            // Wrap around screen
+            if (obj.mesh.position.x > 30) obj.mesh.position.x = -30;
+            if (obj.mesh.position.x < -30) obj.mesh.position.x = 30;
+        });
+
+        // Animate Liquid Glass Lens
+        lensUniforms.uTime.value = time;
+        lensUniforms.uZoom.value = -0.5 + Math.sin(time) * 0.2 + bass * 0.5; 
+        
+        // Make the lens wave, mutate, and pulse to the music
+        lensUniforms.uRimTangential.value = 1.5 + Math.sin(time * 2.0) * 1.0 + bass * 2.0;
+        lensUniforms.uRimInward.value = Math.cos(time * 1.5) * 0.5 - bass;
+        
+        // Size pulses with bass
+        lensUniforms.uSizeX.value = 0.6 + bass * 0.1 + Math.sin(time * 0.5) * 0.1;
+        lensUniforms.uSizeY.value = 0.6 + bass * 0.1 + Math.cos(time * 0.7) * 0.1;
+
+        // Rotate the lens
+        lensUniforms.uRotation.value = time * 0.1;
+
+        // 1. Render World to Render Target
+        renderer.setRenderTarget(rt);
+        renderer.render(worldScene, worldCamera);
+        
+        // 2. Render Lens Scene to Screen
+        renderer.setRenderTarget(null);
+        renderer.render(lensScene, lensCamera);
     }
     animate();
 
     window.addEventListener('resize', () => {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-    });
-
-    window.updateAudio = function(data) {
-        if (!data) return;
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        renderer.setSize(w, h);
         
-        for (let i = 0; i < Math.min(numBins, data.length); i++) {
-            // Smooth the data to make it look highly polished
-            currentAudio[i] = currentAudio[i] * 0.7 + data[i] * 0.3;
-            const val = Math.min(255, Math.max(0, currentAudio[i] * 255));
-            audioDataArray[i * 4] = val;     // R
-            audioDataArray[i * 4 + 1] = val; // G
-            audioDataArray[i * 4 + 2] = val; // B
-            audioDataArray[i * 4 + 3] = 255; // A
-        }
-        audioTexture.needsUpdate = true;
-    };
+        worldCamera.aspect = w / h;
+        worldCamera.updateProjectionMatrix();
+        
+        rt.setSize(w * window.devicePixelRatio, h * window.devicePixelRatio);
+        lensUniforms.uRes.value.set(w * window.devicePixelRatio, h * window.devicePixelRatio);
+        lensUniforms.uAspect.value = w / h;
+    });
 </script>
 </body>
 </html>
