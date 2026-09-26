@@ -125,20 +125,35 @@
             `
             vec3 transformed = vec3(position);
             
-            // Get base position of the instance (the point on the sphere)
+            // Get base position of the instance on the grid
             vec3 instanceBasePos = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
             
-            // Normalize it to get the normal vector pointing outward from sphere center
-            vec3 dir = normalize(instanceBasePos);
+            // Map X position to an audio frequency band (0.0 to 1.0)
+            // Grid width is roughly 64 * 1.2 = 76.8, so from -38.4 to +38.4
+            float xMap = clamp((instanceBasePos.x + 38.0) / 76.0, 0.0, 1.0);
             
-            float yMap = clamp((dir.y + 1.0) * 0.5, 0.0, 1.0);
-            float band = texture2D(u_audioTex, vec2(yMap, 0.5)).r;
-            float bass = texture2D(u_audioTex, vec2(0.04, 0.5)).r;
-            float spike = bass * 5.0 + band * 12.0;
-            float noiseDisp = snoise(dir * 2.5 + u_time * 0.35) * 0.08;
-            // Local +Z points outward. Stretch the voxel into a spike, then push it out.
-            transformed.z *= 1.0 + spike;
-            transformed.z += spike * 0.2 + noiseDisp;
+            // Animate the Z position to simulate moving forward
+            // The grid loops every 1.2 units (the spacing)
+            float zOffset = mod(u_time * 5.0, 1.2);
+            instanceBasePos.z += zOffset;
+            
+            // Audio data based on X position (creates a spectrum analyzer effect across the city)
+            float band = texture2D(u_audioTex, vec2(xMap, 0.5)).r;
+            
+            // Noise fallback for silence
+            float noiseDisp = snoise(vec3(instanceBasePos.x * 0.1, instanceBasePos.z * 0.1, u_time * 0.2)) * 0.5;
+            
+            // Calculate height spike (ensure it goes mostly up)
+            // If band is 0, use noise. If band > 0, spike massively.
+            float spike = max(noiseDisp, band * 15.0);
+            
+            // Scale the Y axis of the building
+            transformed.y *= 1.0 + spike;
+            // Shift up so it grows from the base instead of the center
+            transformed.y += (1.0 + spike) * 0.5 - 0.5;
+            
+            // Apply the scrolling Z offset to the vertex
+            transformed.z += zOffset;
             `
         );
     };
