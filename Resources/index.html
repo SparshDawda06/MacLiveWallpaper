@@ -59,7 +59,7 @@
         roughness: 0.1,
     });
 
-    // We inject custom shader code to displace the instances based on audio and noise
+    // We inject custom shader code to displace instances and make them glow to the beat
     material.onBeforeCompile = (shader) => {
         shader.uniforms.u_audioTex = uniforms.u_audioTex;
         shader.uniforms.u_time = uniforms.u_time;
@@ -67,6 +67,7 @@
         shader.vertexShader = `
             uniform sampler2D u_audioTex;
             uniform float u_time;
+            varying float vBand;
             
             // Simplex 3D Noise 
             vec4 permute(vec4 x){return mod(((x*34.0)+1.0)*x, 289.0);}
@@ -128,28 +129,40 @@
             // Get base position of the instance on the grid
             vec3 instanceBasePos = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
             
-            // Map X position to an audio frequency band (0.0 to 1.0)
-            // Grid width is roughly 64 * 1.2 = 76.8, so from -38.4 to +38.4
             float xMap = clamp((instanceBasePos.x + 38.0) / 76.0, 0.0, 1.0);
-            
-            // Audio data based on X position (creates a spectrum analyzer effect across the city)
             float band = texture2D(u_audioTex, vec2(xMap, 0.5)).r;
+            
+            // Pass band to fragment shader for glowing
+            vBand = band;
             
             // Noise fallback for silence
             float noiseDisp = snoise(vec3(instanceBasePos.x * 0.1, instanceBasePos.z * 0.1, u_time * 0.2)) * 0.5;
             
-            // Each building keeps its own phase so they move one by one, and the lift stays short.
             float phase = instanceBasePos.x * 0.37 + instanceBasePos.z * 0.23;
             float sway = sin(u_time * 1.35 + phase);
-            float spike = clamp(max(noiseDisp, band * 0.55), 0.0, 0.6);
+            float spike = clamp(max(noiseDisp, band * 0.7), 0.0, 0.8);
             
             // Scale the Y axis of the building
             transformed.y *= 1.0 + spike;
-            // Shift up so it grows from the base instead of the center
+            // Shift up so it grows from the base
             transformed.y += (1.0 + spike) * 0.5 - 0.5;
             transformed.y += sway * 0.08;
             transformed.x += sway * 0.1;
             transformed.z += cos(u_time * 0.95 + phase) * 0.1;
+            `
+        );
+        
+        shader.fragmentShader = `
+            varying float vBand;
+        ` + shader.fragmentShader;
+        
+        shader.fragmentShader = shader.fragmentShader.replace(
+            `#include <emissivemap_fragment>`,
+            `#include <emissivemap_fragment>
+             // Add cyan/blue neon glow based on the audio band and Y height
+             // Taller buildings glow brighter!
+             vec3 audioGlow = vec3(0.0, 0.7, 1.0) * pow(vBand, 1.5) * 3.0;
+             totalEmissiveRadiance += audioGlow;
             `
         );
     };
@@ -250,39 +263,40 @@
                 vec3 normal = normalize(vNormal);
                 vec3 viewDir = normalize(vViewPosition);
                 
-                // Fresnel for glowing edge
-                float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 1.5);
+                // Stronger Fresnel for glowing edge
+                float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 1.2);
                 
                 // Chromatic aberration offset
-                float offset = 0.02 + u_bass * 0.03;
+                float offset = 0.03 + u_bass * 0.1;
                 
                 // Texture for R, G, B channels with offsets (color fringing effect)
-                float rNoise = snoise(vUv * 6.0 + vec2(offset, 0.0) - u_time * 0.1);
-                float gNoise = snoise(vUv * 6.0 - u_time * 0.1);
-                float bNoise = snoise(vUv * 6.0 + vec2(-offset, 0.0) - u_time * 0.1);
+                // Higher frequency noise for sharper glitch patches
+                float rNoise = snoise(vUv * 8.0 + vec2(offset, 0.0) - u_time * 0.2);
+                float gNoise = snoise(vUv * 8.0 - u_time * 0.2);
+                float bNoise = snoise(vUv * 8.0 + vec2(-offset, 0.0) - u_time * 0.2);
                 
                 // Static grain
-                float grain = random(vUv * 200.0 + u_time) * 0.2;
+                float grain = random(vUv * 200.0 + u_time) * 0.3;
                 
                 // Base colors with glitch
-                float r = max(rNoise, 0.0) * 0.7 + fresnel + grain;
-                float g = max(gNoise, 0.0) * 0.7 + fresnel + grain;
-                float b = max(bNoise, 0.0) * 0.7 + fresnel + grain;
+                float r = max(rNoise, 0.0) * 0.8 + fresnel + grain;
+                float g = max(gNoise, 0.0) * 0.8 + fresnel + grain;
+                float b = max(bNoise, 0.0) * 0.8 + fresnel + grain;
                 
-                // Intensify based on audio (mostly adds white/blue glow)
-                r += u_bass * 0.4;
-                g += u_bass * 0.4;
-                b += u_bass * 0.7;
+                // Intensify based on audio
+                r += u_bass * 0.7;
+                g += u_bass * 0.3; // keep green lower for red/blue/purple look
+                b += u_bass * 0.9;
                 
                 vec3 finalColor = vec3(r, g, b);
                 
-                // Cutout mask for the dark textured look
-                float mask = smoothstep(-0.3, 0.3, snoise(vUv * 4.0 + u_time * 0.05));
+                // Sharp Cutout mask for the dark textured look
+                float mask = smoothstep(-0.1, 0.1, snoise(vUv * 5.0 + u_time * 0.1));
                 
                 // Opacity governed by mask and fresnel
-                float alpha = max(mask * 0.6, fresnel) + u_bass * 0.5;
+                float alpha = max(mask * 0.8, fresnel) + u_bass * 0.8;
                 
-                gl_FragColor = vec4(finalColor * mask, min(alpha, 1.0));
+                gl_FragColor = vec4(finalColor * mask * 1.5, min(alpha, 1.0));
             }
         `
     });
@@ -290,20 +304,23 @@
     sun.position.set(0, 5, -60); // Far back
     scene.add(sun);
 
-    // Atom-like orbital rings
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending });
+    // Atom-like orbital rings - made thicker and neon tinted
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0x88ccff, fog: false, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
+    const ringMat2 = new THREE.MeshBasicMaterial({ color: 0xff88cc, fog: false, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
+    const ringMat3 = new THREE.MeshBasicMaterial({ color: 0xccff88, fog: false, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
     
-    const ring1 = new THREE.Mesh(new THREE.TorusGeometry(12, 0.06, 8, 100), ringMat);
+    // Thicker toruses (0.15 radius instead of 0.06)
+    const ring1 = new THREE.Mesh(new THREE.TorusGeometry(12, 0.15, 8, 100), ringMat);
     ring1.rotation.x = Math.PI / 2.5;
     ring1.position.copy(sun.position);
     scene.add(ring1);
     
-    const ring2 = new THREE.Mesh(new THREE.TorusGeometry(13.5, 0.06, 8, 100), ringMat);
+    const ring2 = new THREE.Mesh(new THREE.TorusGeometry(13.5, 0.15, 8, 100), ringMat2);
     ring2.rotation.y = Math.PI / 3;
     ring2.position.copy(sun.position);
     scene.add(ring2);
     
-    const ring3 = new THREE.Mesh(new THREE.TorusGeometry(15, 0.06, 8, 100), ringMat);
+    const ring3 = new THREE.Mesh(new THREE.TorusGeometry(15, 0.15, 8, 100), ringMat3);
     ring3.rotation.x = -Math.PI / 3;
     ring3.rotation.y = Math.PI / 4;
     ring3.position.copy(sun.position);
