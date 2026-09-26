@@ -18,9 +18,10 @@
 
     let rt = new THREE.WebGLRenderTarget(window.innerWidth * window.devicePixelRatio, window.innerHeight * window.devicePixelRatio);
 
-    // --- SCENE 1: THE WORLD (Sphere Only) ---
+    // --- SCENE 1: THE WORLD (Sphere, Rings, Dust, Fog) ---
     const worldScene = new THREE.Scene();
-    worldScene.background = new THREE.Color(0x020205);
+    worldScene.background = new THREE.Color(0x000000); // Pure black
+    worldScene.fog = new THREE.FogExp2(0x000000, 0.04); // Soft fog fading to black
     const worldCamera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
     worldCamera.position.z = 20;
 
@@ -34,7 +35,7 @@
         transparent: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
-        fog: false,
+        fog: true, // Let it fade slightly into the fog
         vertexShader: `
             varying vec2 vUv;
             varying vec3 vNormal;
@@ -50,6 +51,7 @@
         fragmentShader: `
             uniform float u_time;
             uniform float u_bass;
+            // ... (rest is same, but keeping fog support requires a small tweak if we used three's built-in fog, but ShaderMaterial doesn't auto-apply fog unless we include the chunks. Let's just manually apply distance fading instead of full fog chunks to keep it clean)
             varying vec2 vUv;
             varying vec3 vNormal;
             varying vec3 vViewPosition;
@@ -86,19 +88,14 @@
                 vec3 normal = normalize(vNormal);
                 vec3 viewDir = normalize(vViewPosition);
                 float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 1.2);
-                float offset = 0.03 + u_bass * 0.1;
                 
-                float rNoise = snoise(vUv * 8.0 + vec2(offset, 0.0) - u_time * 0.2);
-                float gNoise = snoise(vUv * 8.0 - u_time * 0.2);
-                float bNoise = snoise(vUv * 8.0 + vec2(-offset, 0.0) - u_time * 0.2);
-                
+                // Monochrome metallic noise
+                float noiseVal = snoise(vUv * 8.0 - u_time * 0.2);
                 float grain = random(vUv * 200.0 + u_time) * 0.3;
                 
-                float r = max(rNoise, 0.0) * 0.8 + fresnel + grain + u_bass * 0.7;
-                float g = max(gNoise, 0.0) * 0.8 + fresnel + grain + u_bass * 0.3;
-                float b = max(bNoise, 0.0) * 0.8 + fresnel + grain + u_bass * 0.9;
+                float val = max(noiseVal, 0.0) * 0.8 + fresnel + grain + u_bass * 0.5;
+                vec3 finalColor = vec3(val); // Silver/White
                 
-                vec3 finalColor = vec3(r, g, b);
                 float mask = smoothstep(-0.1, 0.1, snoise(vUv * 5.0 + u_time * 0.1));
                 float alpha = max(mask * 0.8, fresnel) + u_bass * 0.8;
                 
@@ -109,23 +106,53 @@
     const sun = new THREE.Mesh(sunGeo, sunMat);
     worldScene.add(sun);
 
-    // Atom Rings
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0x88ccff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
-    const ringMat2 = new THREE.MeshBasicMaterial({ color: 0xff88cc, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
-    const ringMat3 = new THREE.MeshBasicMaterial({ color: 0xccff88, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
+    // Atom Rings (Thin and white)
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending });
     
-    const ring1 = new THREE.Mesh(new THREE.TorusGeometry(4.2, 0.05, 8, 100), ringMat);
+    const ring1 = new THREE.Mesh(new THREE.TorusGeometry(4.2, 0.015, 8, 100), ringMat);
     ring1.rotation.x = Math.PI / 2.5;
     worldScene.add(ring1);
     
-    const ring2 = new THREE.Mesh(new THREE.TorusGeometry(4.7, 0.05, 8, 100), ringMat2);
+    const ring2 = new THREE.Mesh(new THREE.TorusGeometry(4.7, 0.015, 8, 100), ringMat);
     ring2.rotation.y = Math.PI / 3;
     worldScene.add(ring2);
     
-    const ring3 = new THREE.Mesh(new THREE.TorusGeometry(5.2, 0.05, 8, 100), ringMat3);
+    const ring3 = new THREE.Mesh(new THREE.TorusGeometry(5.2, 0.015, 8, 100), ringMat);
     ring3.rotation.x = -Math.PI / 3;
     ring3.rotation.y = Math.PI / 4;
     worldScene.add(ring3);
+
+    // Ethereal Dust Particles
+    const particlesGeo = new THREE.BufferGeometry();
+    const particlesCount = 2500;
+    const posArray = new Float32Array(particlesCount * 3);
+    for(let i = 0; i < particlesCount * 3; i++) {
+        // Spread across a wide volume
+        posArray[i] = (Math.random() - 0.5) * 50;
+    }
+    particlesGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+    
+    // Create a soft glowing dot texture programmatically
+    const pCanvas = document.createElement('canvas');
+    pCanvas.width = 32; pCanvas.height = 32;
+    const pCtx = pCanvas.getContext('2d');
+    const pGradient = pCtx.createRadialGradient(16, 16, 0, 16, 16, 16);
+    pGradient.addColorStop(0, 'rgba(255,255,255,1)');
+    pGradient.addColorStop(1, 'rgba(255,255,255,0)');
+    pCtx.fillStyle = pGradient;
+    pCtx.fillRect(0, 0, 32, 32);
+    const pTex = new THREE.CanvasTexture(pCanvas);
+    
+    const particlesMat = new THREE.PointsMaterial({
+        size: 0.15,
+        map: pTex,
+        transparent: true,
+        opacity: 0.4,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+    });
+    const dustParticles = new THREE.Points(particlesGeo, particlesMat);
+    worldScene.add(dustParticles);
 
     // --- SCENE 2: DUAL LIQUID GLASS LENSES ---
     const lensScene = new THREE.Scene();
@@ -243,19 +270,11 @@
           vec3 base = texture2D(uTex, vUv).rgb;
           vec3 outc = base;
           
-          // LEFT LENS
+          // SINGLE CENTER LENS (creates side arcs)
           float a1 = 0.0;
-          // Positioned far left to keep center perfectly clear
-          vec2 center1 = vec2(0.15, 0.5); 
+          vec2 center1 = vec2(0.5, 0.5); 
           vec3 c1 = discLens(center1, uAspect, a1);
           outc = mix(outc, c1, a1);
-
-          // RIGHT LENS
-          float a2 = 0.0;
-          // Positioned far right
-          vec2 center2 = vec2(0.85, 0.5);
-          vec3 c2 = discLens(center2, uAspect, a2);
-          outc = mix(outc, c2, a2);
           
           gl_FragColor = vec4(outc, 1.0);
         }
@@ -268,16 +287,15 @@
         uTime: { value: 0 },
         uBass: { value: 0 },
         
-        // REDUCED BENDING & DISPERSION AS REQUESTED
-        uDispersion: { value: 6.0 }, 
-        uRimTangential: { value: 0.25 }, 
-        
+        // DEFAULT COMPONENT VALUES
+        uDispersion: { value: 11.0 }, 
+        uRimTangential: { value: 0.6 }, 
         uZoom: { value: 0 },
         uRimInward: { value: 0 },
         
-        // SHAPE PARAMETERS (tall, slightly narrower rectangular ellipse)
-        uSizeX: { value: 0.38 }, 
-        uSizeY: { value: 0.95 }, 
+        // SHAPE PARAMETERS
+        uSizeX: { value: 0.565 }, 
+        uSizeY: { value: 1.0 }, 
         uShape: { value: 0 },
         uSquareRound: { value: 0 },
         uRotation: { value: 65 * Math.PI / 180 } 
@@ -314,26 +332,29 @@
         // Extract bass
         const bass = ((currentAudio[0] || 0) + (currentAudio[1] || 0)) / 2;
 
-        // Animate Sphere and Rings
+        // Animate Sphere, Rings, and Dust
         sunMat.uniforms.u_time.value = time;
         sunMat.uniforms.u_bass.value = bass;
         
         ring1.rotation.z += 0.005 + bass * 0.015;
         ring2.rotation.x += 0.003 + bass * 0.01;
         ring3.rotation.y -= 0.007 + bass * 0.015;
+        
+        dustParticles.rotation.y = time * 0.05 + bass * 0.05;
+        dustParticles.rotation.x = time * 0.02;
 
-        // Animate Dual Liquid Glass Lenses
+        // Animate Single Liquid Glass Lens
         lensUniforms.uTime.value = time;
         lensUniforms.uBass.value = bass;
         
         // Very slight bass pulse to zoom
-        lensUniforms.uZoom.value = Math.sin(time * 0.5) * 0.05 + bass * 0.2; 
+        lensUniforms.uZoom.value = bass * 0.2; 
         
-        // Gentle rotation wobble based on time and audio (less extreme)
-        lensUniforms.uRotation.value = (65 * Math.PI / 180) + Math.sin(time * 0.3) * 0.05 + bass * 0.05;
+        // Gentle rotation wobble
+        lensUniforms.uRotation.value = (65 * Math.PI / 180) + Math.sin(time * 0.3) * 0.03 + bass * 0.05;
         
-        // Slight dispersion pulse on bass (kept restrained)
-        lensUniforms.uDispersion.value = 6.0 + bass * 3.0;
+        // Slight dispersion pulse on bass (kept close to default 11)
+        lensUniforms.uDispersion.value = 11.0 + bass * 2.0;
 
         // 1. Render World to Render Target
         renderer.setRenderTarget(rt);
