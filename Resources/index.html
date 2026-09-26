@@ -16,17 +16,16 @@
     renderer.setPixelRatio(window.devicePixelRatio);
     document.body.appendChild(renderer.domElement);
 
-    // Render target for the post-processing lenses
     let rt = new THREE.WebGLRenderTarget(window.innerWidth * window.devicePixelRatio, window.innerHeight * window.devicePixelRatio);
 
-    // --- SCENE 1: THE WORLD (Sphere + Kinetic Lyrics) ---
+    // --- SCENE 1: THE WORLD (Sphere Only) ---
     const worldScene = new THREE.Scene();
     worldScene.background = new THREE.Color(0x020205);
     const worldCamera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
     worldCamera.position.z = 20;
 
-    // 1. Central Chromatic Glitch Sphere
-    const sunGeo = new THREE.SphereGeometry(3, 64, 64);
+    // Central Chromatic Glitch Sphere
+    const sunGeo = new THREE.SphereGeometry(3.5, 64, 64);
     const sunMat = new THREE.ShaderMaterial({
         uniforms: {
             u_time: { value: 0 },
@@ -115,62 +114,18 @@
     const ringMat2 = new THREE.MeshBasicMaterial({ color: 0xff88cc, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
     const ringMat3 = new THREE.MeshBasicMaterial({ color: 0xccff88, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
     
-    const ring1 = new THREE.Mesh(new THREE.TorusGeometry(3.6, 0.045, 8, 100), ringMat);
+    const ring1 = new THREE.Mesh(new THREE.TorusGeometry(4.2, 0.05, 8, 100), ringMat);
     ring1.rotation.x = Math.PI / 2.5;
     worldScene.add(ring1);
     
-    const ring2 = new THREE.Mesh(new THREE.TorusGeometry(4.05, 0.045, 8, 100), ringMat2);
+    const ring2 = new THREE.Mesh(new THREE.TorusGeometry(4.7, 0.05, 8, 100), ringMat2);
     ring2.rotation.y = Math.PI / 3;
     worldScene.add(ring2);
     
-    const ring3 = new THREE.Mesh(new THREE.TorusGeometry(4.5, 0.045, 8, 100), ringMat3);
+    const ring3 = new THREE.Mesh(new THREE.TorusGeometry(5.2, 0.05, 8, 100), ringMat3);
     ring3.rotation.x = -Math.PI / 3;
     ring3.rotation.y = Math.PI / 4;
     worldScene.add(ring3);
-
-    // 2. Kinetic Lyrics System
-    const lyricStrings = [
-        "WORK IT", "MAKE IT", "DO IT", "MAKES US",
-        "HARDER", "BETTER", "FASTER", "STRONGER"
-    ];
-    let currentLyricIndex = 0;
-    
-    const lyricCanvas = document.createElement('canvas');
-    lyricCanvas.width = 1024;
-    lyricCanvas.height = 256;
-    const lyricCtx = lyricCanvas.getContext('2d');
-    const lyricTex = new THREE.CanvasTexture(lyricCanvas);
-    lyricTex.minFilter = THREE.LinearFilter;
-    
-    const lyricMat = new THREE.MeshBasicMaterial({ map: lyricTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
-    // We use two planes for depth effect
-    const lyricPlaneBg = new THREE.Mesh(new THREE.PlaneGeometry(32, 8), lyricMat);
-    lyricPlaneBg.position.z = -5; // Behind sphere
-    worldScene.add(lyricPlaneBg);
-    
-    const lyricPlaneFg = new THREE.Mesh(new THREE.PlaneGeometry(40, 10), lyricMat);
-    lyricPlaneFg.position.z = 8; // In front of sphere
-    worldScene.add(lyricPlaneFg);
-
-    function updateLyrics(text, bassPulse) {
-        lyricCtx.clearRect(0, 0, lyricCanvas.width, lyricCanvas.height);
-        lyricCtx.fillStyle = '#ffffff';
-        // Bold kinetic typography style
-        lyricCtx.font = '900 160px "Arial Black", Impact, sans-serif';
-        lyricCtx.textAlign = 'center';
-        lyricCtx.textBaseline = 'middle';
-        
-        // Add a neon glow based on bass pulse
-        const glow = Math.floor(bassPulse * 40);
-        lyricCtx.shadowColor = `rgba(0, 255, 200, ${bassPulse})`;
-        lyricCtx.shadowBlur = glow;
-        
-        // Draw standard text, stretched horizontally slightly
-        lyricCtx.scale(1.2, 1);
-        lyricCtx.fillText(text, lyricCanvas.width / 2.4, lyricCanvas.height / 2);
-        lyricCtx.scale(1/1.2, 1);
-        lyricTex.needsUpdate = true;
-    }
 
     // --- SCENE 2: DUAL LIQUID GLASS LENSES ---
     const lensScene = new THREE.Scene();
@@ -237,7 +192,6 @@
 
           float pull = uZoom * 0.30 * (nd * nd);
           float rimStrength = smoothstep(0.578, 1.0, nd);
-          // 21st.dev default rim frequencies: 2 and 1
           float fluidWave = sin(angle * 2.0 + uTime * 2.0) * 0.55 + sin(angle * 1.0 - uTime) * 0.25;
           float rScreen = (uSizeX + uSizeY) * 0.5;
           
@@ -289,12 +243,20 @@
           vec3 base = texture2D(uTex, vUv).rgb;
           vec3 outc = base;
           
-          // EXACTLY LIKE THE REFERENCE COMPONENT: Single massive distorted lens
+          // LEFT LENS
           float a1 = 0.0;
-          vec2 center1 = vec2(0.5, 0.5); 
+          // Positioned far left to keep center perfectly clear
+          vec2 center1 = vec2(0.15, 0.5); 
           vec3 c1 = discLens(center1, uAspect, a1);
           outc = mix(outc, c1, a1);
 
+          // RIGHT LENS
+          float a2 = 0.0;
+          // Positioned far right
+          vec2 center2 = vec2(0.85, 0.5);
+          vec3 c2 = discLens(center2, uAspect, a2);
+          outc = mix(outc, c2, a2);
+          
           gl_FragColor = vec4(outc, 1.0);
         }
     `;
@@ -305,15 +267,20 @@
         uAspect: { value: window.innerWidth / window.innerHeight },
         uTime: { value: 0 },
         uBass: { value: 0 },
-        uDispersion: { value: 11 }, // default
+        
+        // REDUCED BENDING & DISPERSION AS REQUESTED
+        uDispersion: { value: 6.0 }, 
+        uRimTangential: { value: 0.25 }, 
+        
         uZoom: { value: 0 },
-        uRimTangential: { value: 0.6 }, // default
         uRimInward: { value: 0 },
-        uSizeX: { value: 0.565 }, // exact default
-        uSizeY: { value: 1.0 }, // exact default
-        uShape: { value: 0 }, // 0 = circle/ellipse
+        
+        // SHAPE PARAMETERS (tall, slightly narrower rectangular ellipse)
+        uSizeX: { value: 0.38 }, 
+        uSizeY: { value: 0.95 }, 
+        uShape: { value: 0 },
         uSquareRound: { value: 0 },
-        uRotation: { value: 65 * Math.PI / 180 } // exact default
+        uRotation: { value: 65 * Math.PI / 180 } 
     };
 
     const lensMat = new THREE.ShaderMaterial({
@@ -339,7 +306,6 @@
 
     // --- ANIMATION LOOP ---
     const clock = new THREE.Clock();
-    let lastLyricTime = 0;
 
     function animate() {
         requestAnimationFrame(animate);
@@ -347,7 +313,6 @@
         
         // Extract bass
         const bass = ((currentAudio[0] || 0) + (currentAudio[1] || 0)) / 2;
-        const kick = currentAudio[0] > 0.65; // A threshold for a "kick drum" hit
 
         // Animate Sphere and Rings
         sunMat.uniforms.u_time.value = time;
@@ -357,37 +322,18 @@
         ring2.rotation.x += 0.003 + bass * 0.01;
         ring3.rotation.y -= 0.007 + bass * 0.015;
 
-        // Kinetic Lyrics Logic: Switch word on kick, but not too fast
-        if (kick && (time - lastLyricTime) > 0.4) {
-            currentLyricIndex = (currentLyricIndex + 1) % lyricStrings.length;
-            lastLyricTime = time;
-            
-            // Jolt the foreground lyric plane
-            lyricPlaneFg.scale.set(1.4, 1.4, 1.4);
-        }
-        
-        // Smoothly return scale to normal
-        lyricPlaneFg.scale.lerp(new THREE.Vector3(1, 1, 1), 0.1);
-        lyricPlaneBg.scale.set(1.5 + bass*0.5, 1.5 + bass*0.5, 1);
-        
-        // Slightly rotate the text planes for a kinetic, dynamic feel
-        lyricPlaneFg.rotation.z = Math.sin(time) * 0.05;
-        lyricPlaneBg.rotation.z = Math.cos(time * 0.8) * -0.05;
-
-        updateLyrics(lyricStrings[currentLyricIndex], bass);
-
-        // Animate Single Liquid Glass Lens
+        // Animate Dual Liquid Glass Lenses
         lensUniforms.uTime.value = time;
         lensUniforms.uBass.value = bass;
         
-        // Slight bass pulse to zoom
-        lensUniforms.uZoom.value = Math.sin(time) * 0.1 + bass * 0.3; 
+        // Very slight bass pulse to zoom
+        lensUniforms.uZoom.value = Math.sin(time * 0.5) * 0.05 + bass * 0.2; 
         
-        // Gentle rotation wobble based on time and audio
-        lensUniforms.uRotation.value = (65 * Math.PI / 180) + Math.sin(time * 0.5) * 0.05 + bass * 0.1;
+        // Gentle rotation wobble based on time and audio (less extreme)
+        lensUniforms.uRotation.value = (65 * Math.PI / 180) + Math.sin(time * 0.3) * 0.05 + bass * 0.05;
         
-        // Slight dispersion pulse on bass
-        lensUniforms.uDispersion.value = 11 + bass * 5.0;
+        // Slight dispersion pulse on bass (kept restrained)
+        lensUniforms.uDispersion.value = 6.0 + bass * 3.0;
 
         // 1. Render World to Render Target
         renderer.setRenderTarget(rt);
